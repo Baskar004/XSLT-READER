@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library>
+  <book id="b1">
+    <title>The Pragmatic Programmer</title>
+    <author>Andrew Hunt</author>
+    <year>1999</year>
+    <price>42.50</price>
+  </book>
+  <book id="b2">
+    <title>Clean Code</title>
+    <author>Robert C. Martin</author>
+    <year>2008</year>
+    <price>37.00</price>
+  </book>
+  <book id="b3">
+    <title>Designing Data-Intensive Applications</title>
+    <author>Martin Kleppmann</author>
+    <year>2017</year>
+    <price>55.90</price>
+  </book>
+</library>

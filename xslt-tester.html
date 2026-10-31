@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XSLT 1.0 Tester</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; color: #1f2328; background: #f6f8fa; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 12px 20px; background: #24292f; color: #fff; }
+  header h1 { margin: 0; font-size: 1.15rem; }
+  header .sub { font-size: 0.85rem; opacity: 0.7; }
+  main { max-width: 1600px; margin: 0 auto; padding: 16px 20px 32px; }
+
+  .inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pane { display: flex; flex-direction: column; min-width: 0; }
+  .pane label { font-weight: 600; margin-bottom: 6px; }
+
+  textarea {
+    width: 100%; height: 42vh; min-height: 240px; padding: 10px;
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 13px; line-height: 1.4; tab-size: 2; white-space: pre; overflow: auto; resize: vertical;
+    border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328;
+  }
+  textarea:focus { outline: 2px solid #0969da; outline-offset: -1px; }
+
+  .actions { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 16px 0; }
+  button { padding: 8px 18px; font: inherit; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; cursor: pointer; }
+  button:hover { background: #f3f4f6; }
+  button.primary { background: #1f883d; border-color: #1a7f37; color: #fff; font-weight: 600; padding: 8px 28px; }
+  button.primary:hover { background: #1a7f37; }
+
+  .error { margin-bottom: 16px; padding: 10px 14px; border: 1px solid #ff8182; border-left-width: 5px; border-radius: 6px; background: #ffebe9; }
+  .error-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .error-head button { padding: 3px 10px; font-size: 0.85rem; }
+  .error pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; background: #eaeef2; }
+  .tabs button[aria-selected="true"] { background: #fff; font-weight: 600; }
+
+  #preview, #raw {
+    display: block; width: 100%; height: 50vh; min-height: 300px;
+    border: 1px solid #d0d7de; border-radius: 0 6px 6px 6px; background: #fff; resize: vertical;
+  }
+  #preview[hidden], #raw[hidden] { display: none; }
+
+  @media (max-width: 900px) {
+    .inputs { grid-template-columns: 1fr; }
+    main { padding: 12px; }
+    textarea { height: 32vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>XSLT 1.0 Tester</h1>
+  <span class="sub">Built-in browser processor &middot; runs locally, nothing is uploaded</span>
+</header>
+
+<main>
+  <section class="inputs">
+    <div class="pane">
+      <label for="xml">XML</label>
+      <textarea id="xml" spellcheck="false" wrap="off" placeholder="Paste XML here"></textarea>
+    </div>
+    <div class="pane">
+      <label for="xslt">XSLT 1.0</label>
+      <textarea id="xslt" spellcheck="false" wrap="off" placeholder="Paste XSLT 1.0 stylesheet here"></textarea>
+    </div>
+  </section>
+
+  <div class="actions">
+    <button id="transform" class="primary" type="button">Transform</button>
+    <button id="clear" type="button">Clear</button>
+  </div>
+
+  <div id="error" class="error" role="alert" hidden>
+    <div class="error-head">
+      <strong id="error-title"></strong>
+      <button id="goto" type="button" hidden></button>
+    </div>
+    <pre id="error-message"></pre>
+  </div>
+
+  <section>
+    <div class="tabs" role="tablist">
+      <button id="tab-preview" role="tab" type="button" aria-selected="true">Preview</button>
+      <button id="tab-raw" role="tab" type="button" aria-selected="false">Raw HTML</button>
+    </div>
+    <!-- sandbox with no tokens: no scripts, no same-origin access, no forms, no popups -->
+    <iframe id="preview" sandbox referrerpolicy="no-referrer" title="Rendered HTML output"></iframe>
+    <textarea id="raw" readonly spellcheck="false" wrap="off" hidden></textarea>
+  </section>
+</main>
+
+<script>
+(() => {
+  const XSL_NS = 'http://www.w3.org/1999/XSL/Transform';
+  const $ = (id) => document.getElementById(id);
+  const xmlBox = $('xml'), xsltBox = $('xslt');
+  const errorBox = $('error'), errorTitle = $('error-title'), errorMessage = $('error-message'), gotoBtn = $('goto');
+  const preview = $('preview'), raw = $('raw');
+  const tabPreview = $('tab-preview'), tabRaw = $('tab-raw');
+
+  function showTab(name) {
+    const isPreview = name === 'preview';
+    preview.hidden = !isPreview;
+    raw.hidden = isPreview;
+    tabPreview.setAttribute('aria-selected', String(isPreview));
+    tabRaw.setAttribute('aria-selected', String(!isPreview));
+  }
+
+  function hideError() {
+    errorBox.hidden = true;
+    gotoBtn.hidden = true;
+    gotoBtn.onclick = null;
+  }
+
+  function setOutput(html) {
+    preview.srcdoc = html;  // rendered inside the sandboxed iframe
+    raw.value = html;       // shown as plain text
+  }
+
+  function goToLine(textarea, line) {
+    const lines = textarea.value.split('\n');
+    if (line < 1 || line > lines.length) return;
+    let start = 0;
+    for (let i = 0; i < line - 1; i++) start += lines[i].length + 1;
+    textarea.focus();
+    textarea.setSelectionRange(start, start + lines[line - 1].length);
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 18;
+    textarea.scrollTop = Math.max(0, (line - 1) * lineHeight - textarea.clientHeight / 2);
+  }
+
+  // kind: 'XML' | 'XSLT' | 'TRANSFORM' | 'INPUT'
+  function showError(kind, message, line, column) {
+    const labels = { XML: 'XML error', XSLT: 'XSLT error', TRANSFORM: 'Transformation error', INPUT: 'Input error' };
+    let title = labels[kind] || 'Error';
+    if (line) title += ` (line ${line}${column ? ', column ' + column : ''})`;
+    errorTitle.textContent = title;
+    errorMessage.textContent = message;
+    errorBox.hidden = false;
+    if (line && (kind === 'XML' || kind === 'XSLT')) {
+      const target = kind === 'XML' ? xmlBox : xsltBox;
+      gotoBtn.textContent = `Go to line ${line} in ${kind}`;
+      gotoBtn.onclick = () => goToLine(target, line);
+      gotoBtn.hidden = false;
+    }
+  }
+
+  // Parse text as XML. Returns { doc } or { error, line, column }.
+  function parseXml(text) {
+    const doc = new DOMParser().parseFromString(text, 'application/xml');
+    const errs = doc.getElementsByTagNameNS('*', 'parsererror');
+    if (errs.length === 0) return { doc };
+    const msg = errs[0].textContent.trim();
+    let m;
+    // Chrome / Edge: "error on line 3 at column 3: Opening and ending tag mismatch ..."
+    if ((m = msg.match(/error on line (\d+) at column (\d+):\s*([^\n]*)/i))) {
+      return { error: m[3], line: +m[1], column: +m[2] };
+    }
+    // Firefox: "XML Parsing Error: mismatched tag. ...\nLocation: ...\nLine Number 3, Column 3:"
+    if ((m = msg.match(/Line Number (\d+), Column (\d+)/i))) {
+      const first = msg.split('\n')[0].replace(/^XML Parsing Error:\s*/i, '');
+      return { error: first, line: +m[1], column: +m[2] };
+    }
+    return { error: msg };
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function versionHint(xsltDoc) {
+    const v = xsltDoc.documentElement && xsltDoc.documentElement.getAttribute('version');
+    return v && v !== '1.0'
+      ? `\n\nNote: this stylesheet declares version="${v}". Browsers only support XSLT 1.0, so XSLT ${v} features (such as xs: types, string-join, for-each-group) will fail.`
+      : '';
+  }
+
+  function runTransform() {
+    hideError();
+    setOutput('');
+    const xmlText = xmlBox.value, xsltText = xsltBox.value;
+
+    if (!xmlText.trim()) return showError('INPUT', 'The XML input is empty.');
+    if (!xsltText.trim()) return showError('INPUT', 'The XSLT input is empty.');
+
+    const xml = parseXml(xmlText);
+    if (xml.error) return showError('XML', 'The XML is not well-formed: ' + xml.error, xml.line, xml.column);
+
+    const xslt = parseXml(xsltText);
+    if (xslt.error) return showError('XSLT', 'The XSLT is not well-formed XML: ' + xslt.error, xslt.line, xslt.column);
+
+    const root = xslt.doc.documentElement;
+    const isStylesheet = root.namespaceURI === XSL_NS && (root.localName === 'stylesheet' || root.localName === 'transform');
+    if (!isStylesheet) {
+      return showError('XSLT', 'The root element must be xsl:stylesheet or xsl:transform, with xmlns:xsl="' + XSL_NS + '".');
+    }
+
+    try {
+      const processor = new XSLTProcessor();
+      processor.importStylesheet(xslt.doc);
+      const result = processor.transformToDocument(xml.doc);
+      if (!result || !result.documentElement) {
+        return showError('TRANSFORM',
+          'The browser could not run the transformation and gave no details. ' +
+          'Press F12 and check the Console tab for the processor message.' + versionHint(xslt.doc));
+      }
+      const out = result.documentElement;
+      const bad = result.getElementsByTagNameNS('*', 'parsererror');
+      if (bad.length && (out.localName === 'parsererror' || /XSLT/i.test(bad[0].textContent))) {
+        return showError('TRANSFORM', bad[0].textContent.trim() + versionHint(xslt.doc));
+      }
+      let html;
+      if (out.localName.toLowerCase() === 'html') {
+        html = '<!DOCTYPE html>\n' + out.outerHTML;
+      } else {
+        // Non-HTML result (xml/text output): show it as text so it is still visible.
+        const text = new XMLSerializer().serializeToString(result);
+        html = '<pre style="white-space:pre-wrap;font-family:Consolas,monospace">' + escapeHtml(text) + '</pre>';
+      }
+      setOutput(html);
+    } catch (e) {
+      showError('TRANSFORM', 'The transformation failed: ' + (e && e.message ? e.message : e) + versionHint(xslt.doc));
+    }
+  }
+
+  function clearAll() {
+    xmlBox.value = '';
+    xsltBox.value = '';
+    setOutput('');
+    hideError();
+    showTab('preview');
+    xmlBox.focus();
+  }
+
+  $('transform').addEventListener('click', runTransform);
+  $('clear').addEventListener('click', clearAll);
+  tabPreview.addEventListener('click', () => showTab('preview'));
+  tabRaw.addEventListener('click', () => showTab('raw'));
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') runTransform();
+  });
+})();
+</script>
+</body>
+</html>
